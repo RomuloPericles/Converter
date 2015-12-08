@@ -1,0 +1,599 @@
+unit uFuncoes;
+
+interface
+
+  uses
+    SysUtils, Classes, StdCtrls,
+
+    Windows, Messages, Graphics, Controls, Forms, DBTables, ActiveX,
+    ShellAPI, Dialogs, IniFiles, Math, DB, typinfo, Grids, ComObj,
+    Winsock, Registry, FileCtrl, Printers, Jpeg, DBGrids;
+
+  const
+    cDecimalSeparator  = ',';
+    cThousandSeparator = '.';
+
+    cDiasNoMes: array [1 .. 12] of Integer = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31);
+
+    cWidth   = 800;
+    cHeight  = 600;
+    cPixel   = 96;
+    cMinutos = 0.0035;
+    // c_caminho_pasta_programas = 'C:\Programas\';
+    // c_nome_programa_atualiza = 'atualiza';
+    cExtensaoArquivo = '.exe';
+    // c_nome_dll_valida_IE = 'DllInscE32.dll';
+    cMascaraCNPJ = '000''.''000''.''000/0000-00';
+    cMascaraCEP  = '00000''-''000';
+    cMascaraCPF  = '000''.''000''.''000''-''00';
+
+  type
+    TTipoAlinhamento = (taEsquerda, taDireita, taCentro);
+
+  function StrZero(sStr: string; Tam: Integer): string;
+  function InvRTrim(sStr: string; Tam: Integer): string;
+  function InvLTrim(sStr: string; Tam: Integer): string;
+  function fnstUrlEncodeUTF8(stInput: widestring): string;
+  function FormataCEP(p_cep: String): String;
+  function FormataCPF(p_CPF: String): String;
+  function HTTPEncode(const AStr: String): String;
+  function URIDecode(const Str: string): string;
+
+  // recebe uma string com campos separados por ponto-e-virgula e carrega para o stringlist.
+  procedure ConverteTextoLista(_Str: string; _Lista: TStrings; _AddVazio: Boolean; _Sep: string = ';');
+
+  // monta uma string baseada nos items do TStrings passado com o separador definido...
+  function ConverteListaTexto(Lista: TStrings; Prefixo: string = ''; Sep: string = ';'): string;
+
+  // converte os espacos em percentuais e retorna a string entre percentuais
+  function ConverteTextoLike(Texto: string): string;
+
+  // elimina todos os TObjects associados a lista
+  procedure LiberaObjetosLista(var L: TList);
+
+  // limpa todos os itens do stringlist e passa ele para FreeAndNil
+  // se o parametros Objetos for True todos os TObjects associados serão liberados..
+  procedure LiberaStringList(var L: TStringList; Objetos: Boolean = False); overload;
+
+  // limpa todos os itens do ListBox que é recebido NÃO LIBERANDO O MESMO
+  // se o parametros Objetos for True todos os TObjects associados serão liberados..
+  procedure LiberaStringList(var L: TListBox; Objetos: Boolean = False); overload;
+
+  // Retorna o numero passado em zeros...
+  function Space(Num: Integer; Carac: Char = ' '): string;
+
+  function DeixaNumero(sStr: string): String;
+  function EhNumero(sStr: string): Boolean;
+
+  // retorna true caso a string passada for vazia ou cheia de espaços
+  function IsEmpty(sStr: string): Boolean;
+
+  procedure CursorAguarde;
+  procedure CursorPronto;
+
+  function FormataStr(Alinha: TTipoAlinhamento; Texto: string; Tamanho: Integer; Caracter: Char = ' '): string;
+
+  procedure MsgErro(Msg: String);
+  procedure MsgAdverte(Msg: String);
+  procedure MsgInforma(Msg: String);
+  function MsgConfirma(Msg: String): Boolean;
+
+  function ContaStr(sPrin, sParte: string): Integer;
+
+  // end;
+implementation
+
+  (* ********************************************************** *)
+  // retorna a string passada preenchida com zeros a frente até chegar ao tamanho
+  // indicado, se a string já é maior esta é truncada.
+  (* ********************************************************** *)
+  function StrZero(sStr: string; Tam: Integer): string;
+    var
+      iTam: Integer;
+      i   : Integer;
+    begin
+      iTam := Length(sStr);
+      if iTam = Tam then
+        Result := sStr
+      else
+        begin
+          if iTam > Tam then
+            Result := Copy(sStr, 1, Tam)
+          else
+            begin
+              Result   := sStr;
+              for i    := Length(sStr) + 1 to Tam do
+                Result := '0' + Result;
+            end;
+        end;
+    end;
+
+  function InvRTrim(sStr: string; Tam: Integer): string;
+    begin
+      Result := Copy(sStr, 1, Tam) + StringOfChar(' ', Tam - Length(sStr));
+    end;
+
+  (* ********************************************************** *)
+  // Coloca espaços a esquerda da string
+  (* ********************************************************** *)
+  function InvLTrim(sStr: string; Tam: Integer): string;
+    begin
+      Result := StringOfChar(' ', Tam - Length(sStr)) + Copy(sStr, 1, Tam);
+    end;
+
+  (* ********************************************************** *)
+  // remove todos os caracteres que não sejam números da string
+  (* ********************************************************** *)
+  function RemoveChar(sStr: string): string;
+    var
+      i: Integer;
+    begin
+      Result := '';
+      for i  := 1 to Length(sStr) do
+        begin
+          if sStr[i] in ['0' .. '9'] then
+            Result := Result + sStr[i];
+        end;
+    end;
+
+  (* ********************************************************** *)
+  // remove o separador de milhar que é usado com a função "FormatFloat"
+  (* ********************************************************** *)
+  function RemoveThousandSeparator(S: string): string;
+    begin
+      Result := S;
+      while Pos(cThousandSeparator, Result) > 0 do
+        Delete(Result, Pos(cThousandSeparator, Result), 1);
+    end;
+
+  (* ********************************************************** *)
+  // verifica se a string passada contém somente números
+  // se receber uma string vazia retorna False automaticamente...
+  (* ********************************************************** *)
+  function EhNumero(sStr: string): Boolean;
+    var
+      i: Integer;
+    begin
+      Result := True;
+
+      if Trim(sStr) = '' then
+        begin
+          Result := False;
+          Exit;
+        end;
+
+      for i := 1 to Length(sStr) do
+        begin
+          if not(sStr[i] in ['0' .. '9']) then
+            begin
+              Result := False;
+              Break;
+            end;
+        end;
+    end;
+
+  function DeixaNumero(sStr: string): String;
+    var
+      i: Integer;
+    begin
+      Result := '';
+      if Trim(sStr) = '' then
+        Exit;
+
+      for i := 1 to Length(sStr) do
+        if (sStr[i] in ['0' .. '9']) then
+          Result := Result + sStr[i];
+
+    end;
+
+  (* ********************************************************** *)
+  // retorna a string passada entre aspas simples
+  (* ********************************************************** *)
+  function AspasS(sStr: string): string;
+    begin
+      Result := '''' + sStr + '''';
+    end;
+
+  // retorna a string passada entre apostrofos...
+  function AspasD(sStr: string): string;
+    begin
+      Result := '"' + sStr + '"';
+    end;
+
+  (* ********************************************************** *)
+  // conta quantas vezes a string "sParte" está contida dentro da
+  // string Principal
+  (* ********************************************************** *)
+  function ContaStr(sPrin, sParte: string): Integer;
+    var
+      sStr: string;
+    begin
+      sStr   := sPrin;
+      Result := 0;
+      while Pos(sParte, sStr) > 0 do
+        begin
+          Delete(sStr, 1, Pos(sParte, sStr));
+          Inc(Result);
+        end;
+    end;
+
+  function FormataCNPJ(p_CNPJ: string): string;
+    var
+      v_valor: Double;
+    begin
+      try
+        v_valor := StrToFloat(p_CNPJ);
+      except
+        v_valor := 0;
+      end;
+      Result := FormatFloat(cMascaraCNPJ, v_valor);
+    end;
+
+  function FormataCEP(p_cep: String): String;
+    var
+      v_valor: Double;
+    begin
+      try
+        v_valor := StrToFloat(p_cep);
+      except
+        v_valor := 0;
+      end;
+      Result := FormatFloat(cMascaraCEP, v_valor);
+    end;
+
+  function FormataCPF(p_CPF: String): String;
+    var
+      v_valor: Double;
+    begin
+      try
+        v_valor := StrToFloat(p_CPF);
+      except
+        v_valor := 0;
+      end;
+      Result := FormatFloat(cMascaraCPF, v_valor);
+    end;
+
+  function fnstUrlEncodeUTF8(stInput: widestring): string;
+    const
+      hex: array [0 .. 255] of string = ('%00', '%01', '%02', '%03', '%04', '%05', '%06', '%07', '%08', '%09', '%0a',
+        '%0b', '%0c', '%0d', '%0e', '%0f', '%10', '%11', '%12', '%13', '%14', '%15', '%16', '%17', '%18', '%19', '%1a',
+        '%1b', '%1c', '%1d', '%1e', '%1f', '%20', '%21', '%22', '%23', '%24', '%25', '%26', '%27', '%28', '%29', '%2a',
+        '%2b', '%2c', '%2d', '%2e', '%2f', '%30', '%31', '%32', '%33', '%34', '%35', '%36', '%37', '%38', '%39', '%3a',
+        '%3b', '%3c', '%3d', '%3e', '%3f', '%40', '%41', '%42', '%43', '%44', '%45', '%46', '%47', '%48', '%49', '%4a',
+        '%4b', '%4c', '%4d', '%4e', '%4f', '%50', '%51', '%52', '%53', '%54', '%55', '%56', '%57', '%58', '%59', '%5a',
+        '%5b', '%5c', '%5d', '%5e', '%5f', '%60', '%61', '%62', '%63', '%64', '%65', '%66', '%67', '%68', '%69', '%6a',
+        '%6b', '%6c', '%6d', '%6e', '%6f', '%70', '%71', '%72', '%73', '%74', '%75', '%76', '%77', '%78', '%79', '%7a',
+        '%7b', '%7c', '%7d', '%7e', '%7f', '%80', '%81', '%82', '%83', '%84', '%85', '%86', '%87', '%88', '%89', '%8a',
+        '%8b', '%8c', '%8d', '%8e', '%8f', '%90', '%91', '%92', '%93', '%94', '%95', '%96', '%97', '%98', '%99', '%9a',
+        '%9b', '%9c', '%9d', '%9e', '%9f', '%a0', '%a1', '%a2', '%a3', '%a4', '%a5', '%a6', '%a7', '%a8', '%a9', '%aa',
+        '%ab', '%ac', '%ad', '%ae', '%af', '%b0', '%b1', '%b2', '%b3', '%b4', '%b5', '%b6', '%b7', '%b8', '%b9', '%ba',
+        '%bb', '%bc', '%bd', '%be', '%bf', '%c0', '%c1', '%c2', '%c3', '%c4', '%c5', '%c6', '%c7', '%c8', '%c9', '%ca',
+        '%cb', '%cc', '%cd', '%ce', '%cf', '%d0', '%d1', '%d2', '%d3', '%d4', '%d5', '%d6', '%d7', '%d8', '%d9', '%da',
+        '%db', '%dc', '%dd', '%de', '%df', '%e0', '%e1', '%e2', '%e3', '%e4', '%e5', '%e6', '%e7', '%e8', '%e9', '%ea',
+        '%eb', '%ec', '%ed', '%ee', '%ef', '%f0', '%f1', '%f2', '%f3', '%f4', '%f5', '%f6', '%f7', '%f8', '%f9', '%fa',
+        '%fb', '%fc', '%fd', '%fe', '%ff');
+    var
+      iLen, iIndex: Integer;
+      stEncoded   : string;
+      ch          : widechar;
+    begin
+      iLen       := Length(stInput);
+      stEncoded  := '';
+      for iIndex := 1 to iLen do
+        begin
+          ch := stInput[iIndex];
+          { if (ch >= 'A') and (ch <= 'Z') then
+            stEncoded := stEncoded + ch
+            else if (ch >= 'a') and (ch <= 'z') then
+            stEncoded := stEncoded + ch
+            else if (ch >= '0') and (ch <= '9') then
+            stEncoded := stEncoded + ch
+            else if (ch = ' ') then
+            stEncoded := stEncoded + '+'
+            else } if ((ch = '-') or (ch = '_') or (ch = '.') or (ch = '!') or (ch = '*') or (ch = '~') or (ch = '\') or
+              (ch = '(') or (ch = ')')) then
+            stEncoded := stEncoded + ch
+          else if (Ord(ch) <= $07F) then
+            stEncoded := stEncoded + hex[Ord(ch)]
+          else if (Ord(ch) <= $7FF) then
+            begin
+              stEncoded := stEncoded + hex[$C0 or (Ord(ch) shr 6)];
+              stEncoded := stEncoded + hex[$80 or (Ord(ch) and $3F)];
+            end
+          else
+            begin
+              stEncoded := stEncoded + hex[$E0 or (Ord(ch) shr 12)];
+              stEncoded := stEncoded + hex[$80 or ((Ord(ch) shr 6) and ($3F))];
+              stEncoded := stEncoded + hex[$80 or ((Ord(ch)) and ($3F))];
+            end;
+        end;
+      Result := (stEncoded);
+    end;
+
+  function HTTPEncode(const AStr: String): String;
+    const
+      NoConversion = ['A' .. 'Z', 'a' .. 'z', '*', '@', '.', '_', '-'];
+    var
+      Sp, Rp: PChar;
+    begin
+      SetLength(Result, Length(AStr) * 3);
+      Sp := PChar(AStr);
+      Rp := PChar(Result);
+      while Sp^ <> #0 do
+        begin
+          if Sp^ in NoConversion then
+            Rp^ := Sp^
+          else if Sp^ = ' ' then
+            Rp^ := '+'
+          else
+            begin
+              FormatBuf(Rp^, 3, '%%%.2x', 6, [Ord(Sp^)]);
+              Inc(Rp, 2);
+            end;
+          Inc(Rp);
+          Inc(Sp);
+        end;
+      SetLength(Result, Rp - PChar(Result));
+    end;
+
+  function URIDecode(const Str: string): string;
+    const
+      cPercent      = '%';
+      rsEscapeError = 'ERRO';
+
+      // Counts number of '%' characters in a UTF8 string
+      function CountPercent(const S: UTF8String): Integer;
+        var
+          Idx: Integer; // loops thru all octets of S
+        begin
+          Result  := 0;
+          for Idx := 1 to Length(S) do
+            if S[Idx] = cPercent then
+              Inc(Result);
+        end;
+
+    var
+      SrcUTF8: UTF8String; // input string as UTF-8
+      SrcIdx : Integer;    // index into source UTF-8 string
+      ResUTF8: UTF8String; // output string as UTF-8
+      ResIdx : Integer;    // index into result UTF-8 string
+      hex    : string;     // hex component of % encoding
+      ChValue: Integer;    // character ordinal value from a % encoding
+    begin
+      // Convert input string to UTF-8
+      SrcUTF8 := UTF8Encode(Str);
+      // Size the decoded UTF-8 string
+      SetLength(ResUTF8, Length(SrcUTF8) - 2 * CountPercent(SrcUTF8));
+      SrcIdx := 1;
+      ResIdx := 1;
+      // Process each octet of the source string
+      while SrcIdx <= Length(SrcUTF8) do
+        begin
+          if SrcUTF8[SrcIdx] = cPercent then
+            begin
+              // % encoding: decode following two hex chars into required code point
+              if Length(SrcUTF8) < SrcIdx + 2 then
+                raise EConvertError.Create(rsEscapeError); // malformed: too short
+              hex := '$' + string(SrcUTF8[SrcIdx + 1] + SrcUTF8[SrcIdx + 2]);
+              if not TryStrToInt(hex, ChValue) then
+                raise EConvertError.Create(rsEscapeError); // malformed: not valid hex
+              ResUTF8[ResIdx] := AnsiChar(ChValue);
+              Inc(ResIdx);
+              Inc(SrcIdx, 3);
+            end
+          else
+            begin
+              // plain char or UTF-8 continuation character: copy unchanged
+              ResUTF8[ResIdx] := SrcUTF8[SrcIdx];
+              Inc(ResIdx);
+              Inc(SrcIdx);
+            end;
+        end;
+      // Convert back to native string type for result
+      Result := UTF8ToString(ResUTF8);
+    end;
+
+  (* ********************************************************** *)
+  // recebe uma string com campos separados por ponto-e-virgula e carrega para o stringlist.
+  (* ********************************************************** *)
+  procedure ConverteTextoLista(_Str: string; _Lista: TStrings; _AddVazio: Boolean; _Sep: string = ';');
+    var
+      ch   : string;
+      i    : Integer;
+      axStr: string;
+    begin
+      _Lista.Clear;
+      axStr := '';
+      for i := 1 to Length(_Str) do
+        begin
+          ch := _Str[i];
+          if ch = _Sep then
+            begin
+              if (Trim(axStr) <> '') or _AddVazio then
+                _Lista.Add(Trim(axStr));
+              axStr := '';
+            end
+          else
+            axStr := axStr + ch;
+        end;
+      if axStr <> '' then
+        if (Trim(axStr) <> '') or _AddVazio then
+          _Lista.Add(Trim(axStr));
+    end;
+
+  (* ********************************************************** *)
+  // monta uma string baseada nos items do TStrings passado com o separador definido...
+  (* ********************************************************** *)
+  function ConverteListaTexto(Lista: TStrings; Prefixo: string = ''; Sep: string = ';'): string;
+    var
+      i: Integer;
+    begin
+      Result := '';
+      for i  := 0 to Lista.Count - 1 do
+        if i = 0 then
+          Result := Prefixo + Lista[i]
+        else
+          Result := Result + Sep + Prefixo + Lista[i];
+    end;
+
+  (* ********************************************************** *)
+  // retorna a string passada entre percentuais e substitui todos os
+  // espacos por percentuais
+  // Ex: 'JO SIL' = '%JO%SIL%'
+  (* ********************************************************** *)
+  function ConverteTextoLike(Texto: string): string;
+    var
+      axStr: string;
+    begin
+      axStr := Texto;
+      while Pos('  ', axStr) > 0 do
+        Delete(axStr, Pos('  ', axStr), 1);
+      while Pos(' ', axStr) > 0 do
+        axStr[Pos(' ', axStr)] := '%';
+      Result                   := '%' + axStr + '%';
+    end;
+
+  (* ********************************************************** *)
+  // elimina todos os TObjects associados a lista
+  (* ********************************************************** *)
+  procedure LiberaObjetosLista(var L: TList);
+    begin
+      while L.Count > 0 do
+        begin
+          TObject(L[0]).Free;
+          L.Delete(0);
+        end;
+    end;
+
+  (* ********************************************************** *)
+  // limpa todos os itens do stringlist e passa ele para FreeAndNil
+  // se o parametros Objetos for True todos os TObjects associados serão liberados..
+  (* ********************************************************** *)
+  procedure LiberaStringList(var L: TStringList; Objetos: Boolean = False);
+    begin
+      if Objetos then
+        while L.Count > 0 do
+          begin
+            L.Objects[0].Free;
+            L.Delete(0);
+          end
+      else
+        while L.Count > 0 do
+          L.Delete(0);
+      FreeAndNil(L);
+    end;
+
+  (* ********************************************************** *)
+  // limpa todos os itens do ListBox que é recebido NÃO LIBERANDO O MESMO
+  // se o parametros Objetos for True todos os TObjects associados serão liberados..
+  (* ********************************************************** *)
+  procedure LiberaStringList(var L: TListBox; Objetos: Boolean = False); overload;
+    begin
+      if Objetos then
+        while L.Items.Count > 0 do
+          begin
+            L.Items.Objects[0].Free;
+            L.Items.Delete(0);
+          end
+      else
+        while L.Items.Count > 0 do
+          L.Items.Delete(0);
+    end;
+
+  (* ********************************************************** *)
+  // retorna uma string de espaços do tamanho recebido.
+  (* ********************************************************** *)
+  function Space(Num: Integer; Carac: Char = ' '): string;
+    begin
+      Result := StringOfChar(Carac, Num);
+    end;
+
+  (* ********************************************************** *)
+  // retorna se a string é vazia
+  (* ********************************************************** *)
+  function IsEmpty(sStr: string): Boolean;
+    begin
+      Result := Trim(sStr) = '';
+    end;
+
+  function Str2Curr(Str: string): Currency;
+    var
+      xRetorno: string;
+    begin
+      if Str = '' then
+        Result := 0
+      else
+        begin
+          xRetorno := StringReplace(Str, '.', '', [rfReplaceAll]);
+          Result   := StrToCurr(xRetorno);
+        end;
+    end;
+
+  function Str2CurrDef(p_str: string; const p_def: Currency = 0): Currency;
+    begin
+      if (p_str = '') then
+        Result := p_def
+      else
+        Result := StrToCurr(StringReplace(p_str, '.', '', [rfReplaceAll]));
+    end;
+
+  procedure CursorAguarde;
+    begin
+      Screen.Cursor := crHourGlass;
+    end;
+
+  procedure CursorPronto;
+    begin
+      Screen.Cursor := crDefault;
+    end;
+
+  // formata uma string inserindo o caractere passado a direita ou esquerda
+  // até chegar ao tamanho desejado
+  function FormataStr(Alinha: TTipoAlinhamento; Texto: string; Tamanho: Integer; Caracter: Char = ' '): string;
+    var
+      xDiferenca: SmallInt;
+    begin
+      xDiferenca := Tamanho - Length(Copy(Texto, 1, Tamanho));
+      case Alinha of
+        taDireita:
+          Result := Space(xDiferenca, Caracter) + Copy(Texto, 1, Tamanho);
+        taEsquerda:
+          Result := Copy(Texto, 1, Tamanho) + Space(xDiferenca, Caracter);
+        else
+          Result := Space(Trunc(xDiferenca / 2), Caracter) + Copy(Texto, 1, Tamanho) +
+            Space(Trunc(xDiferenca / 2), Caracter);
+          if (Length(Result) < Tamanho) then
+            Result := Result + Caracter;
+      end;
+    end;
+
+  // Mensagem de Erro
+  procedure MsgErro(Msg: String);
+    begin
+      MessageDlg(Msg, mtError, [mbOK], 0);
+    end;
+
+  // Mensagem de Atenção
+  procedure MsgAdverte(Msg: String);
+    begin
+      MessageDlg(Msg, mtWarning, [mbOK], 0);
+    end;
+
+  // Mensagem de Informacao
+  procedure MsgInforma(Msg: String);
+    begin
+      MessageDlg(Msg, mtInformation, [mbOK], 0);
+    end;
+
+  // Mensagem de Confirmacao
+  function MsgConfirma(Msg: String): Boolean;
+    begin
+      (* If MessageDlg(Msg, mtConfirmation, [mbYes, mbNo], 0) = mrYes then
+        Result := True
+        else
+        Result := False;
+      *)
+      Result := MessageDlg(Msg, mtConfirmation, [mbYes, mbNo], 0) = mrYes;
+    end;
+
+end.
